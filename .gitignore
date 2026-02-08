@@ -1,0 +1,62 @@
+# 環境変数
+.env
+
+# Pythonキャッシュ
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# 仮想環境
+venv/
+env/
+ENV/
+.venv
+
+# ChromaDBデータ
+chroma_db/
+
+# アップロードされたデータ（サンプルファイル以外）
+uploaded_data/*
+!uploaded_data/sample_document.txt
+!uploaded_data/streamlit_guide.md
+
+# 🆕 ログファイル
+logs/
+*.log
+
+# 🆕 画像キャッシュ
+image_cache/
+
+# IDEファイル
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OSファイル
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Streamlitキャッシュ
+.streamlit/
+
+# Python egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
