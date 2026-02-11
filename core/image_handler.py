@@ -183,11 +183,29 @@ def extract_images_embedded_positioned(pdf_path, min_size=100):
                                 continue
                             
                             # 画像切り抜き
-                            mat = fitz.Matrix(2.0, 2.0)
-                            clip_rect = fitz.Rect(x0, y0, x1, y1)
-                            pix = page.get_pixmap(matrix=mat, clip=clip_rect, alpha=False)
-                            img_data = pix.tobytes("png")
-                            image = Image.open(io.BytesIO(img_data))
+                            image = None
+                            try:
+                                mat = fitz.Matrix(2.0, 2.0)
+                                clip_rect = fitz.Rect(x0, y0, x1, y1)
+                                pix = page.get_pixmap(matrix=mat, clip=clip_rect, alpha=False)
+                                img_data = pix.tobytes("png")
+                                image = Image.open(io.BytesIO(img_data))
+                            except Exception:
+                                # フォールバック: 生データから取得（JBIG2/CMYK等の特殊形式対応）
+                                try:
+                                    base_image = pdf_document.extract_image(xref)
+                                    if base_image and base_image.get("image"):
+                                        image = Image.open(io.BytesIO(base_image["image"]))
+                                        # CMYK等はRGBに変換
+                                        if image.mode not in ("RGB", "RGBA", "L"):
+                                            image = image.convert("RGB")
+                                        logger.debug(f"Fallback extraction succeeded for xref={xref} on page {page_num + 1}")
+                                except Exception as e2:
+                                    logger.warning(f"Failed to extract image on page {page_num + 1} (xref={xref}): {e2}")
+                                    continue
+                            
+                            if image is None:
+                                continue
                             
                             if image.width < min_size or image.height < min_size:
                                 continue

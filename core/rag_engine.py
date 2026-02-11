@@ -7,10 +7,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import streamlit as st
 from llama_index.core import Document, VectorStoreIndex, StorageContext, Settings
 from llama_index.vector_stores.chroma import ChromaVectorStore
-from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.llms.openai import OpenAI
 import chromadb
 
+from core.custom_llama_models import CustomOpenAIEmbedding, CustomOpenAILLM
 from core.pdf_processor import extract_text_from_pdf, validate_pdf_file
 from core.image_handler import extract_images_from_pdf, ImageCache
 from utils.logger import get_logger
@@ -49,8 +48,8 @@ def initialize_rag_system(chroma_client, collection_name="multimodal_rag"):
         llm_model = st.session_state.get("llm_model", "gpt-4o-mini")
         temperature = st.session_state.get("temperature", 0.1)
         
-        Settings.embed_model = OpenAIEmbedding(model=embed_model)
-        Settings.llm = OpenAI(model=llm_model, temperature=temperature)
+        Settings.embed_model = CustomOpenAIEmbedding(model=embed_model)
+        Settings.llm = CustomOpenAILLM(model=llm_model, temperature=temperature)
         
         logger.info(f"RAG system settings: embed={embed_model}, llm={llm_model}, temp={temperature}")
         

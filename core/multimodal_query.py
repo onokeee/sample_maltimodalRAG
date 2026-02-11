@@ -9,6 +9,7 @@ from typing import List, Dict, Any
 from PIL import Image
 import streamlit as st
 
+from core.openai_client import build_chat_messages, call_chat_api
 from utils.logger import get_logger
 
 logger = get_logger()
@@ -126,82 +127,83 @@ def query_with_multimodal(
         if image_documents:
             logger.info(f"Using GPT-4 Vision with {len(image_documents)} images")
             
-            # OpenAI APIを直接呼び出し
-            import openai
-            import os
-            
             # 会話履歴を構築
-            messages = []
-            
-            # 会話履歴を追加（有効な場合）
+            chat_history = []
             if use_chat_history and "messages" in st.session_state:
-                # 直近のNターンを取得（ユーザーとアシスタントのペア）
                 recent_messages = st.session_state.messages[-(chat_history_length * 2):]
                 for msg in recent_messages:
-                    if msg["role"] == "user":
-                        messages.append({
-                            "role": "user",
-                            "content": msg["content"]
-                        })
-                    elif msg["role"] == "assistant":
-                        messages.append({
-                            "role": "assistant",
+                    if msg["role"] in ("user", "assistant"):
+                        chat_history.append({
+                            "role": msg["role"],
                             "content": msg["content"]
                         })
             
-            # 現在のクエリを追加（画像付き）
-            messages.append({
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt_text
-                    }
-                ]
-            })
+            # 画像をBase64エンコード
+            image_base64_list = [
+                image_to_base64(img_doc["image"])
+                for img_doc in image_documents[:max_images]
+            ]
             
-            # 画像を追加（指定された最大数まで）
-            for img_doc in image_documents[:max_images]:
-                img_base64 = image_to_base64(img_doc["image"])
-                messages[-1]["content"].append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/png;base64,{img_base64}",
-                        "detail": image_detail
-                    }
-                })
+            # メッセージ配列を構築
+            messages = build_chat_messages(
+                prompt_text=prompt_text,
+                image_base64_list=image_base64_list,
+                image_detail=image_detail,
+                max_images=max_images,
+                chat_history=chat_history,
+            )
             
-            # GPT-4 Vision API呼び出し（セッション状態のモデル設定を使用）
+            # GPT-4 Vision API呼び出し
             llm_model = st.session_state.get("llm_model", "gpt-4o-mini")
             temperature = st.session_state.get("temperature", 0.1)
             
-            client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+            answer_text = call_chat_api(
+                messages=messages,
+                model=llm_model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                top_p=top_p,
+                frequency_penalty=frequency_penalty,
+                presence_penalty=presence_penalty,
+                seed=seed,
+            )
             
-            # APIパラメータを構築
-            api_params = {
-                "model": llm_model,
-                "messages": messages,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "top_p": top_p,
-                "frequency_penalty": frequency_penalty,
-                "presence_penalty": presence_penalty
-            }
-            
-            # Seedが指定されている場合のみ追加
-            if seed is not None:
-                api_params["seed"] = seed
-            
-            vision_response = client.chat.completions.create(**api_params)
-            
-            logger.info(f"Vision API call: model={llm_model}, temp={temperature}, top_p={top_p}, freq_pen={frequency_penalty}, pres_pen={presence_penalty}, seed={seed}, max_tokens={max_tokens}, images={len(image_documents[:max_images])}, detail={image_detail}, history={use_chat_history}({chat_history_length if use_chat_history else 0} turns)")
-            
-            answer_text = vision_response.choices[0].message.content
+            logger.info(f"Vision query: images={len(image_base64_list)}, detail={image_detail}, history={use_chat_history}({chat_history_length if use_chat_history else 0} turns)")
             
         else:
-            # 画像がない場合は通常のLLM
-            logger.info("No images found, using standard LLM")
-            answer_text = response.response
+            # 画像がない場合も openai_client 経由で統一
+            logger.info("No images found, using standard LLM via openai_client")
+            
+            # 会話履歴を構築
+            chat_history = []
+            if use_chat_history and "messages" in st.session_state:
+                recent_messages = st.session_state.messages[-(chat_history_length * 2):]
+                for msg in recent_messages:
+                    if msg["role"] in ("user", "assistant"):
+                        chat_history.append({
+                            "role": msg["role"],
+                            "content": msg["content"]
+                        })
+            
+            messages = build_chat_messages(
+                prompt_text=prompt_text,
+                image_base64_list=[],
+                chat_history=chat_history,
+            )
+            
+            llm_model = st.session_state.get("llm_model", "gpt-4o-mini")
+            temperature = st.session_state.get("temperature", 0.1)
+            
+            answer_text = call_chat_api(
+                messages=messages,
+                model=llm_model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                top_p=top_p,
+                frequency_penalty=frequency_penalty,
+                presence_penalty=presence_penalty,
+                seed=seed,
+            )
         
         return {
             "answer": answer_text,
@@ -241,12 +243,12 @@ def render_response_with_images(answer: str, image_documents: List[Dict]):
         else:
             # 画像番号
             img_num = int(part)
-            # 該当する画像を表示
+            # 該当する画像を表示（クリックで拡大可能なサムネイル）
             for img_doc in image_documents:
                 if img_doc["number"] == img_num:
-                    st.image(
-                        img_doc["image"],
-                        caption=f"画像{img_num}: {img_doc['metadata'].get('file_name')} - Page {img_doc['metadata'].get('page')}",
-                        use_container_width=True
-                    )
+                    with st.expander(f"🖼️ 画像{img_num}: {img_doc['metadata'].get('file_name')} - Page {img_doc['metadata'].get('page')}"):
+                        st.image(
+                            img_doc["image"],
+                            width=480,
+                        )
                     break

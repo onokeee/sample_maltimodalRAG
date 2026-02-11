@@ -17,14 +17,13 @@ from core.vectordb_browser import render_vectordb_browser, export_vectordb_summa
 from utils.logger import get_logger
 from utils.exceptions import (
     APIKeyError, FileUploadError, IndexCreationError, 
-    QueryError, PDFProcessingError
+    PDFProcessingError
 )
 
 # LlamaIndexインポート（インデックス自動ロード用）
 from llama_index.core import VectorStoreIndex, StorageContext, Settings
 from llama_index.vector_stores.chroma import ChromaVectorStore
-from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.llms.openai import OpenAI as LlamaOpenAI
+from core.custom_llama_models import CustomOpenAIEmbedding, CustomOpenAILLM
 
 # 環境変数の読み込み
 load_dotenv()
@@ -79,8 +78,8 @@ if "index" not in st.session_state:
             
             if collections:
                 # 🔧 LlamaIndex Settings を初期化（重要！）
-                Settings.embed_model = OpenAIEmbedding(model=st.session_state.embed_model)
-                Settings.llm = LlamaOpenAI(model=st.session_state.llm_model, temperature=st.session_state.temperature)
+                Settings.embed_model = CustomOpenAIEmbedding(model=st.session_state.embed_model)
+                Settings.llm = CustomOpenAILLM(model=st.session_state.llm_model, temperature=st.session_state.temperature)
                 logger.info(f"LlamaIndex Settings initialized: embed={st.session_state.embed_model}, llm={st.session_state.llm_model}")
                 
                 # インデックスを再構築
@@ -156,10 +155,12 @@ def validate_api_key(api_key):
     if not api_key:
         raise APIKeyError("APIキーが入力されていません")
     
-    if not api_key.startswith("sk-"):
+    # 社内APIの場合はsk-で始まらないキーも許容
+    is_custom_endpoint = bool(os.getenv("OPENAI_API_BASE_URL", ""))
+    if not is_custom_endpoint and not api_key.startswith("sk-"):
         raise APIKeyError("無効なAPIキー形式です（sk-で始まる必要があります）")
     
-    if len(api_key) < 20:
+    if len(api_key) < 10:
         raise APIKeyError("APIキーが短すぎます")
     
     logger.info("API key validated successfully")
@@ -215,6 +216,20 @@ with st.sidebar:
             logger.warning(f"Invalid API key: {e}")
     else:
         st.warning("⚠️ APIキーを入力してください")
+    
+    # APIエンドポイントURL設定
+    api_base_url = st.text_input(
+        "APIエンドポイントURL",
+        value=os.getenv("OPENAI_API_BASE_URL", ""),
+        placeholder="https://api.openai.com/v1",
+        help="空欄の場合は公式OpenAI APIを使用。社内APIの場合はURLを指定。"
+    )
+    if api_base_url:
+        os.environ["OPENAI_API_BASE_URL"] = api_base_url
+        st.caption(f"🌐 接続先: {api_base_url}")
+    else:
+        os.environ.pop("OPENAI_API_BASE_URL", None)
+        st.caption("🌐 接続先: https://api.openai.com/v1（デフォルト）")
     
     st.markdown("---")
     
@@ -776,7 +791,7 @@ with tab1:
                             st.markdown("---")
                             col_idx1, col_idx2 = st.columns(2)
                             with col_idx1:
-                                if st.button("🗑️ 選択ファイルのインデックスを削除", type="primary", use_container_width=True):
+                                if st.button("🗑️ 選択ファイルのインデックスを削除", type="primary", use_container_width=True, key="btn_idx_delete"):
                                     try:
                                         deleted_files = []
                                         for file_name, doc_ids in files_to_delete:
@@ -796,8 +811,11 @@ with tab1:
                                             
                                             for image_id in images_to_remove:
                                                 cache_path = Path(image_cache.registry[image_id]["path"])
-                                                if cache_path.exists():
-                                                    cache_path.unlink()
+                                                try:
+                                                    if cache_path.exists():
+                                                        cache_path.unlink()
+                                                except PermissionError:
+                                                    logger.warning(f"Could not delete cache file (in use): {cache_path}")
                                                 image_cache.current_memory -= image_cache.registry[image_id]["size"]
                                                 del image_cache.registry[image_id]
                                                 logger.info(f"Image cache deleted: {image_id}")
@@ -821,7 +839,7 @@ with tab1:
                                         st.error(f"❌ 削除失敗: {e}")
                                         logger.error(f"Index deletion failed: {e}")
                             with col_idx2:
-                                if st.button("❌ キャンセル", use_container_width=True):
+                                if st.button("❌ キャンセル", use_container_width=True, key="btn_idx_cancel"):
                                     st.rerun()
                         else:
                             st.info("ℹ️ 削除するファイルを選択してください")
@@ -880,7 +898,7 @@ with tab2:
     if not st.session_state.index_created:
         st.warning("⚠️ まずインデックスを作成してください")
     else:
-        chat_container = st.container(height=500)
+        chat_container = st.container()
         
         with chat_container:
             for message in st.session_state.messages:
